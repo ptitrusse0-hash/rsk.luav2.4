@@ -1,0 +1,1286 @@
+-- ============================================================
+-- RSK Menu | Urban Reload v2.5
+-- Dev RSK | INSERT = menu | AIM KEY = configurable
+-- ============================================================
+
+local Players          = game:GetService("Players")
+local RunService       = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local TweenService     = game:GetService("TweenService")
+local CoreGui          = game:GetService("CoreGui")
+
+local LocalPlayer = Players.LocalPlayer
+local Camera      = workspace.CurrentCamera
+local GuiParent   = (gethui and gethui()) or CoreGui
+
+-- ============================================================
+-- CONFIG
+-- ============================================================
+local CONFIG = {
+    AimbotEnabled    = false, SilentAim = false, MagicBullet = false,
+    AimPart          = "Head", AimFOV = 150, AimSmoothing = 0.08,
+    CeilingTime      = 0.08, VisibleOnly = true,
+    AimKey           = Enum.KeyCode.Q, AimHoldMode = true,
+    ESPEnabled       = false, SkeletonEnabled = false, NametagEnabled = false,
+    BoxEnabled       = false, HealthBarEnabled = false, DistanceEnabled = false,
+    ESPColor         = Color3.fromRGB(255,255,255), SkeletonColor = Color3.fromRGB(255,255,255),
+    NametagColor     = Color3.fromRGB(255,255,255), BoxColor = Color3.fromRGB(255,255,255),
+    HealthColorHigh  = Color3.fromRGB(80,255,120), HealthColorLow = Color3.fromRGB(255,80,80),
+    ESPThickness     = 1.5, OverlayEnabled = true, SpectatorOverlay = true,
+    MenuOpen         = false, MenuKey = Enum.KeyCode.Insert,
+    BGColor          = Color3.fromRGB(18,18,22), PanelColor = Color3.fromRGB(26,26,32),
+    TextColor        = Color3.fromRGB(240,240,240), DimColor = Color3.fromRGB(120,120,130),
+    DumpRemote       = false, RemoteArgDir = 2, RemoteArgPart = 3, RemoteNameFilter = "Fire",
+    -- Stream Proof
+    StreamMode       = false,
+    StreamKey        = Enum.KeyCode.F5,
+    PanicKey         = Enum.KeyCode.Delete,
+    AutoHideOnAlt    = true,   -- cache tout si Alt+Tab détecté
+    StreamOpacity    = 0,      -- opacité du menu en stream mode (0 = invisible)
+}
+
+-- ============================================================
+-- STREAM PROOF STATE
+-- ============================================================
+local streamActive    = false
+local panicActive     = false
+local allGuiRoots     = {}   -- rempli après création des GUIs
+local originalParents = {}   -- { [gui] = parent original }
+
+local function setAllGuiVisible(visible)
+    for _, gui in ipairs(allGuiRoots) do
+        pcall(function() gui.Enabled = visible end)
+    end
+end
+
+local function enterStreamMode()
+    streamActive = true
+    -- rend tous les GUI invisibles sans les détruire
+    setAllGuiVisible(false)
+    CONFIG.MenuOpen = false
+end
+
+local function exitStreamMode()
+    streamActive = false
+    setAllGuiVisible(true)
+end
+
+local function panicHide()
+    panicActive = true
+    setAllGuiVisible(false)
+    CONFIG.MenuOpen = false
+    -- remet à zéro aim
+    -- (les toggles restent en CONFIG, seul le visuel disparaît)
+end
+
+local function panicRestore()
+    panicActive = false
+    if not streamActive then
+        setAllGuiVisible(true)
+    end
+end
+
+-- ============================================================
+-- UNLOCK DATA
+-- ============================================================
+local CAMOS = {
+    {id="default",     label="Default",      remote="SetWeaponCamo"},
+    {id="woodland",    label="Woodland",     remote="SetWeaponCamo"},
+    {id="urban",       label="Urban",        remote="SetWeaponCamo"},
+    {id="desert",      label="Desert",       remote="SetWeaponCamo"},
+    {id="arctic",      label="Arctic",       remote="SetWeaponCamo"},
+    {id="carbon",      label="Carbon Fiber", remote="SetWeaponCamo"},
+    {id="gold",        label="Gold",         remote="SetWeaponCamo"},
+    {id="diamond",     label="Diamond",      remote="SetWeaponCamo"},
+    {id="dark_matter", label="Dark Matter",  remote="SetWeaponCamo"},
+    {id="plasma",      label="Plasma",       remote="SetWeaponCamo"},
+    {id="blood",       label="Bloodshot",    remote="SetWeaponCamo"},
+    {id="chrome",      label="Chrome",       remote="SetWeaponCamo"},
+}
+local ATTACHMENTS = {
+    Laser   = {
+        {id="laser_green", label="Laser Vert",   remote="SetAttachment", slot="laser"},
+        {id="laser_red",   label="Laser Rouge",  remote="SetAttachment", slot="laser"},
+        {id="laser_blue",  label="Laser Bleu",   remote="SetAttachment", slot="laser"},
+        {id="laser_ir",    label="Laser IR",     remote="SetAttachment", slot="laser"},
+        {id="none",        label="Aucun",         remote="SetAttachment", slot="laser"},
+    },
+    Optique = {
+        {id="red_dot",      label="Red Dot",       remote="SetAttachment", slot="optic"},
+        {id="holographic",  label="Holographique", remote="SetAttachment", slot="optic"},
+        {id="acog",         label="ACOG x4",       remote="SetAttachment", slot="optic"},
+        {id="sniper_scope", label="Sniper Scope",  remote="SetAttachment", slot="optic"},
+        {id="thermal",      label="Thermique",     remote="SetAttachment", slot="optic"},
+        {id="none",         label="Aucun",          remote="SetAttachment", slot="optic"},
+    },
+    Canon   = {
+        {id="suppressor",   label="Silencieux",    remote="SetAttachment", slot="barrel"},
+        {id="flash_hider",  label="Flash Hider",   remote="SetAttachment", slot="barrel"},
+        {id="muzzle_brake", label="Muzzle Brake",  remote="SetAttachment", slot="barrel"},
+        {id="heavy_barrel", label="Heavy Barrel",  remote="SetAttachment", slot="barrel"},
+        {id="none",         label="Aucun",          remote="SetAttachment", slot="barrel"},
+    },
+    Chargeur= {
+        {id="extended_mag", label="Extended Mag",  remote="SetAttachment", slot="mag"},
+        {id="drum_mag",     label="Drum Mag",      remote="SetAttachment", slot="mag"},
+        {id="fast_mag",     label="Fast Mag",      remote="SetAttachment", slot="mag"},
+        {id="none",         label="Aucun",          remote="SetAttachment", slot="mag"},
+    },
+    Stock   = {
+        {id="no_stock",  label="No Stock",       remote="SetAttachment", slot="stock"},
+        {id="tactical",  label="Tactical Stock", remote="SetAttachment", slot="stock"},
+        {id="heavy",     label="Heavy Stock",    remote="SetAttachment", slot="stock"},
+        {id="none",      label="Aucun",           remote="SetAttachment", slot="stock"},
+    },
+}
+
+-- ============================================================
+-- PROFILE SYSTEM
+-- ============================================================
+local PROFILE_KEYS = {
+    "AimbotEnabled","SilentAim","MagicBullet","AimPart","AimFOV","AimSmoothing",
+    "CeilingTime","VisibleOnly","AimHoldMode","ESPEnabled","SkeletonEnabled",
+    "NametagEnabled","BoxEnabled","HealthBarEnabled","DistanceEnabled","ESPThickness",
+    "OverlayEnabled","SpectatorOverlay","DumpRemote","RemoteArgDir","RemoteArgPart",
+    "RemoteNameFilter","StreamMode","AutoHideOnAlt",
+}
+local PRESETS = {
+    Legit    = {AimbotEnabled=true,SilentAim=false,MagicBullet=false,AimFOV=80,AimSmoothing=0.25,CeilingTime=0.08,VisibleOnly=true,AimHoldMode=true,ESPEnabled=true,SkeletonEnabled=false,NametagEnabled=true,BoxEnabled=false,HealthBarEnabled=true,DistanceEnabled=true,ESPThickness=1.2,OverlayEnabled=true,SpectatorOverlay=true,DumpRemote=false,RemoteArgDir=2,RemoteArgPart=3,RemoteNameFilter="Fire",AimPart="Head",StreamMode=false,AutoHideOnAlt=true},
+    Rage     = {AimbotEnabled=true,SilentAim=true,MagicBullet=true,AimFOV=500,AimSmoothing=0.01,CeilingTime=0.01,VisibleOnly=false,AimHoldMode=false,ESPEnabled=true,SkeletonEnabled=true,NametagEnabled=true,BoxEnabled=true,HealthBarEnabled=true,DistanceEnabled=true,ESPThickness=1.5,OverlayEnabled=true,SpectatorOverlay=true,DumpRemote=false,RemoteArgDir=2,RemoteArgPart=3,RemoteNameFilter="Fire",AimPart="Head",StreamMode=false,AutoHideOnAlt=true},
+    ["ESP Only"] = {AimbotEnabled=false,SilentAim=false,MagicBullet=false,AimFOV=150,AimSmoothing=0.08,CeilingTime=0.08,VisibleOnly=true,AimHoldMode=true,ESPEnabled=true,SkeletonEnabled=true,NametagEnabled=true,BoxEnabled=true,HealthBarEnabled=true,DistanceEnabled=true,ESPThickness=1.5,OverlayEnabled=true,SpectatorOverlay=true,DumpRemote=false,RemoteArgDir=2,RemoteArgPart=3,RemoteNameFilter="Fire",AimPart="Head",StreamMode=false,AutoHideOnAlt=true},
+    Stream   = {AimbotEnabled=true,SilentAim=false,MagicBullet=false,AimFOV=120,AimSmoothing=0.20,CeilingTime=0.08,VisibleOnly=true,AimHoldMode=true,ESPEnabled=false,SkeletonEnabled=false,NametagEnabled=false,BoxEnabled=false,HealthBarEnabled=false,DistanceEnabled=false,ESPThickness=1.2,OverlayEnabled=false,SpectatorOverlay=false,DumpRemote=false,RemoteArgDir=2,RemoteArgPart=3,RemoteNameFilter="Fire",AimPart="Head",StreamMode=true,AutoHideOnAlt=true},
+}
+local SAVE_DIR="RSK_Configs/"; local SAVE_EXT=".cfg"
+local function encodeProfile(name)
+    local lines={"[RSK_PROFILE:"..name.."]"}
+    for _,k in ipairs(PROFILE_KEYS) do
+        local v=CONFIG[k]; local t=typeof(v)
+        if t=="boolean" then table.insert(lines,k.."=bool:"..tostring(v))
+        elseif t=="number" then table.insert(lines,k.."=num:"..tostring(v))
+        elseif t=="string" then table.insert(lines,k.."=str:"..v) end
+    end
+    return table.concat(lines,"\n")
+end
+local function decodeProfile(raw)
+    local data={}
+    for line in raw:gmatch("[^\n]+") do
+        local k,typ,val=line:match("^(.-)=(%a+):(.+)$")
+        if k and typ and val then
+            if typ=="bool" then data[k]=(val=="true")
+            elseif typ=="num" then data[k]=tonumber(val) or 0
+            elseif typ=="str" then data[k]=val end
+        end
+    end
+    return data
+end
+local function applyProfile(data)
+    for _,k in ipairs(PROFILE_KEYS) do if data[k]~=nil then CONFIG[k]=data[k] end end
+end
+local function saveProfile(name)
+    if not writefile then return false,"writefile non supporté" end
+    local ok,err=pcall(function()
+        if not isfolder(SAVE_DIR) then makefolder(SAVE_DIR) end
+        writefile(SAVE_DIR..name..SAVE_EXT,encodeProfile(name))
+    end)
+    return ok, ok and "sauvegardé" or tostring(err)
+end
+local function loadProfile(name)
+    if not readfile then return false,"readfile non supporté" end
+    local ok,raw=pcall(readfile,SAVE_DIR..name..SAVE_EXT)
+    if not ok then return false,"fichier introuvable" end
+    applyProfile(decodeProfile(raw)); return true,"chargé"
+end
+local function listSavedProfiles()
+    if not listfiles then return {} end
+    local ok,files=pcall(listfiles,SAVE_DIR); if not ok then return {} end
+    local names={}
+    for _,path in ipairs(files) do
+        local n=path:match("([^/\\]+)"..SAVE_EXT.."$")
+        if n then table.insert(names,n) end
+    end
+    return names
+end
+local function deleteProfile(name)
+    if not delfile then return false,"delfile non supporté" end
+    local ok,err=pcall(delfile,SAVE_DIR..name..SAVE_EXT)
+    return ok, ok and "supprimé" or tostring(err)
+end
+
+-- ============================================================
+-- HELPERS
+-- ============================================================
+local aimActive=false; local lastShot=0; local mouseDown=false
+local sFireServer=string.char(70,105,114,101,83,101,114,118,101,114)
+local sInvokeServer=string.char(73,110,118,111,107,101,83,101,114,118,101,114)
+local SKELETON_CONNECTIONS={
+    {"Head","UpperTorso"},{"UpperTorso","LowerTorso"},{"LowerTorso","HumanoidRootPart"},
+    {"LeftUpperArm","UpperTorso"},{"LeftLowerArm","LeftUpperArm"},{"LeftHand","LeftLowerArm"},
+    {"RightUpperArm","UpperTorso"},{"RightLowerArm","RightUpperArm"},{"RightHand","RightLowerArm"},
+    {"LeftUpperLeg","LowerTorso"},{"LeftLowerLeg","LeftUpperLeg"},{"LeftFoot","LeftLowerLeg"},
+    {"RightUpperLeg","LowerTorso"},{"RightLowerLeg","RightUpperLeg"},{"RightFoot","RightLowerLeg"},
+}
+local function worldToViewport(pos)
+    local vp,onScreen=Camera:WorldToViewportPoint(pos); return Vector2.new(vp.X,vp.Y),onScreen,vp.Z
+end
+local function getPart(char,name) return char and char:FindFirstChild(name) end
+local function getHumanoid(char) return char and char:FindFirstChildOfClass("Humanoid") end
+local function isAlive(p) local c=p.Character; local h=getHumanoid(c); return c and h and h.Health>0 end
+local function getEnemies()
+    local t={}
+    for _,p in ipairs(Players:GetPlayers()) do
+        if p~=LocalPlayer and isAlive(p) then table.insert(t,p) end
+    end
+    return t
+end
+local function isVisible(part)
+    if not CONFIG.VisibleOnly then return true end
+    local char=LocalPlayer.Character; local origin=char and char:FindFirstChild("HumanoidRootPart")
+    if not origin then return true end
+    local params=RaycastParams.new(); params.FilterType=Enum.RaycastFilterType.Exclude
+    local ignore={}
+    for _,p in ipairs(Players:GetPlayers()) do if p.Character then table.insert(ignore,p.Character) end end
+    params.FilterDescendantsInstances=ignore
+    return workspace:Raycast(origin.Position,part.Position-origin.Position,params)==nil
+end
+local function getDistance(player)
+    local mc=LocalPlayer.Character; local hr=mc and mc:FindFirstChild("HumanoidRootPart")
+    local ec=player.Character; local er=ec and ec:FindFirstChild("HumanoidRootPart")
+    if not hr or not er then return 0 end
+    return math.floor((hr.Position-er.Position).Magnitude)
+end
+local function getHealthPercent(player)
+    local c=player.Character; local h=getHumanoid(c)
+    if not h then return 0 end; return math.clamp(h.Health/h.MaxHealth,0,1)
+end
+local function lerpColor(a,b,t)
+    return Color3.new(a.R+(b.R-a.R)*t,a.G+(b.G-a.G)*t,a.B+(b.B-a.B)*t)
+end
+local function getFrenchTime()
+    local utcH=math.floor(os.time()/3600)%24; local frH=(utcH+1)%24
+    local m=math.floor(os.time()/60)%60; local s=os.time()%60
+    return string.format("%02d:%02d:%02d",frH,m,s)
+end
+local function getBestTarget()
+    local myChar=LocalPlayer.Character; if not myChar then return nil,nil end
+    local center=Vector2.new(Camera.ViewportSize.X/2,Camera.ViewportSize.Y/2)
+    local best,bestPart,bestDist=nil,nil,CONFIG.AimFOV
+    for _,enemy in ipairs(getEnemies()) do
+        local char=enemy.Character
+        if char then
+            local part=getPart(char,CONFIG.AimPart) or getPart(char,"HumanoidRootPart")
+            if part then
+                local sp,onScreen=worldToViewport(part.Position)
+                if onScreen then
+                    local dist=(sp-center).Magnitude
+                    if dist<bestDist then
+                        if not CONFIG.VisibleOnly or isVisible(part) then
+                            bestDist=dist; best=enemy; bestPart=part
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return bestPart,best
+end
+local lastRemoteFire=0
+local function fireRemote(remoteName,...)
+    local now=tick()
+    if (now-lastRemoteFire)<0.12 then task.wait(0.12-(now-lastRemoteFire)) end
+    lastRemoteFire=tick()
+    local args={...}; local rs=game:GetService("ReplicatedStorage")
+    local remote=rs:FindFirstChild(remoteName,true)
+    if remote and remote:IsA("RemoteEvent") then
+        remote:FireServer(table.unpack(args)); return true,"OK"
+    elseif remote and remote:IsA("RemoteFunction") then
+        local ok,res=pcall(function() return remote:InvokeServer(table.unpack(args)) end)
+        return ok,tostring(res)
+    end
+    return false,"remote introuvable: "..remoteName
+end
+local function getEquippedWeapon()
+    local char=LocalPlayer.Character; if not char then return nil end
+    for _,obj in ipairs(char:GetChildren()) do if obj:IsA("Tool") then return obj end end
+    return nil
+end
+local function getWeaponName()
+    local tool=getEquippedWeapon(); if not tool then return nil end; return tool.Name
+end
+
+-- ============================================================
+-- HOOKMETAMETHOD
+-- ============================================================
+if hookmetamethod then
+    local oldNamecall
+    oldNamecall=hookmetamethod(game,"__namecall",function(self,...)
+        local method=getnamecallmethod()
+        if CONFIG.DumpRemote and (method==sFireServer or method==sInvokeServer) then
+            print(string.format("[RSK DUMP] %s | method=%s",self:GetFullName(),method))
+            local args={...}
+            for i,v in ipairs(args) do print(string.format("  arg%d  type=%-12s  val=%s",i,typeof(v),tostring(v))) end
+            return oldNamecall(self,...)
+        end
+        if method==sFireServer and CONFIG.SilentAim and CONFIG.AimbotEnabled
+            and aimActive and tostring(self.Name):find(CONFIG.RemoteNameFilter)
+        then
+            local target=getBestTarget()
+            if target then
+                local args=table.pack(...)
+                local dir=(target.Position-Camera.CFrame.Position).Unit
+                args[CONFIG.RemoteArgDir]=dir
+                if CONFIG.RemoteArgPart<=args.n then args[CONFIG.RemoteArgPart]=target end
+                return oldNamecall(self,table.unpack(args,1,args.n))
+            end
+        end
+        return oldNamecall(self,...)
+    end)
+else
+    warn("[RSK] hookmetamethod indisponible — silent aim serveur désactivé")
+end
+
+-- ============================================================
+-- OVERLAYS
+-- ============================================================
+local overlayGui=Instance.new("ScreenGui"); overlayGui.Name="RSK_Overlay"
+overlayGui.ResetOnSpawn=false; overlayGui.IgnoreGuiInset=true
+overlayGui.ZIndexBehavior=Enum.ZIndexBehavior.Sibling; overlayGui.Parent=GuiParent
+local overlayFrame=Instance.new("Frame")
+overlayFrame.Size=UDim2.new(0,240,0,38); overlayFrame.Position=UDim2.new(0.5,-120,0,6)
+overlayFrame.BackgroundColor3=Color3.fromRGB(14,14,18); overlayFrame.BackgroundTransparency=0.15
+overlayFrame.BorderSizePixel=0; overlayFrame.Active=true; overlayFrame.Draggable=true
+overlayFrame.Parent=overlayGui
+Instance.new("UICorner",overlayFrame).CornerRadius=UDim.new(0,8)
+local ovStroke=Instance.new("UIStroke"); ovStroke.Color=Color3.fromRGB(255,255,255)
+ovStroke.Thickness=1; ovStroke.Transparency=0.7; ovStroke.Parent=overlayFrame
+local overlayLabel=Instance.new("TextLabel")
+overlayLabel.Size=UDim2.new(1,0,1,0); overlayLabel.BackgroundTransparency=1
+overlayLabel.Font=Enum.Font.GothamBold; overlayLabel.TextSize=13
+overlayLabel.TextColor3=Color3.fromRGB(255,255,255)
+overlayLabel.Text="RSK menu by dev RSK  |  00:00:00"; overlayLabel.Parent=overlayFrame
+RunService.RenderStepped:Connect(function()
+    overlayFrame.Visible=CONFIG.OverlayEnabled and not streamActive and not panicActive
+    overlayLabel.Text="RSK menu by dev RSK  |  "..getFrenchTime()
+end)
+
+-- spectator overlay
+local specGui=Instance.new("ScreenGui"); specGui.Name="RSK_Spectators"
+specGui.ResetOnSpawn=false; specGui.IgnoreGuiInset=true
+specGui.ZIndexBehavior=Enum.ZIndexBehavior.Sibling; specGui.Parent=GuiParent
+local specFrame=Instance.new("Frame")
+specFrame.Size=UDim2.new(0,200,0,20); specFrame.Position=UDim2.new(0,10,0.5,0)
+specFrame.BackgroundColor3=Color3.fromRGB(14,14,18); specFrame.BackgroundTransparency=0.2
+specFrame.BorderSizePixel=0; specFrame.Active=true; specFrame.Draggable=true
+specFrame.ClipsDescendants=true; specFrame.Parent=specGui
+Instance.new("UICorner",specFrame).CornerRadius=UDim.new(0,8)
+local specStroke=Instance.new("UIStroke"); specStroke.Color=Color3.fromRGB(255,255,255)
+specStroke.Thickness=1; specStroke.Transparency=0.7; specStroke.Parent=specFrame
+local specLayout=Instance.new("UIListLayout"); specLayout.Padding=UDim.new(0,2)
+specLayout.SortOrder=Enum.SortOrder.LayoutOrder; specLayout.Parent=specFrame
+local specPad=Instance.new("UIPadding"); specPad.PaddingTop=UDim.new(0,4)
+specPad.PaddingLeft=UDim.new(0,8); specPad.PaddingRight=UDim.new(0,8)
+specPad.PaddingBottom=UDim.new(0,4); specPad.Parent=specFrame
+local specHeader=Instance.new("TextLabel")
+specHeader.Size=UDim2.new(1,0,0,16); specHeader.BackgroundTransparency=1
+specHeader.Font=Enum.Font.GothamBold; specHeader.TextSize=11
+specHeader.TextColor3=Color3.fromRGB(255,255,255); specHeader.TextXAlignment=Enum.TextXAlignment.Left
+specHeader.Text="👁  SPECTATEURS"; specHeader.LayoutOrder=0; specHeader.Parent=specFrame
+local SPEC_MAX=10; local specLabels={}
+for i=1,SPEC_MAX do
+    local l=Instance.new("TextLabel"); l.Size=UDim2.new(1,0,0,14)
+    l.BackgroundTransparency=1; l.Font=Enum.Font.Gotham; l.TextSize=11
+    l.TextColor3=Color3.fromRGB(200,220,255); l.TextXAlignment=Enum.TextXAlignment.Left
+    l.Text=""; l.Visible=false; l.LayoutOrder=i; l.Parent=specFrame; specLabels[i]=l
+end
+local function getSpectators()
+    local result={}; local myChar=LocalPlayer.Character; if not myChar then return result end
+    if type(_G)=="table" and type(_G.RSK_Spectators)=="table" then
+        for _,name in ipairs(_G.RSK_Spectators) do table.insert(result,{name=name,dist="?"}) end
+        return result
+    end
+    for _,p in ipairs(Players:GetPlayers()) do
+        if p~=LocalPlayer then
+            local ok,val=pcall(function() return p:GetAttribute("SpectatingTarget") end)
+            if ok and val==LocalPlayer.UserId then
+                table.insert(result,{name=p.DisplayName,dist=getDistance(p).." m"})
+            end
+        end
+    end
+    return result
+end
+local lastSpecUpdate=0
+RunService.RenderStepped:Connect(function()
+    specFrame.Visible=CONFIG.SpectatorOverlay and not streamActive and not panicActive
+    local now=tick(); if (now-lastSpecUpdate)<0.5 then return end; lastSpecUpdate=now
+    local specs=getSpectators(); local count=math.min(#specs,SPEC_MAX)
+    if count==0 then
+        specHeader.Text="👁  SPECTATEURS  (0)"
+        for i=1,SPEC_MAX do specLabels[i].Visible=false end
+        specFrame.Size=UDim2.new(0,200,0,24)
+    else
+        specHeader.Text=string.format("👁  SPECTATEURS  (%d)",count)
+        for i=1,SPEC_MAX do
+            if i<=count then
+                specLabels[i].Text=string.format("  %s   %s",specs[i].name,specs[i].dist)
+                specLabels[i].Visible=true
+            else specLabels[i].Visible=false end
+        end
+        specFrame.Size=UDim2.new(0,200,0,20+count*16+8)
+    end
+end)
+
+-- ============================================================
+-- MAIN MENU GUI
+-- ============================================================
+local MenuGui=Instance.new("ScreenGui"); MenuGui.Name="RSK_Menu"
+MenuGui.ResetOnSpawn=false; MenuGui.IgnoreGuiInset=true
+MenuGui.ZIndexBehavior=Enum.ZIndexBehavior.Sibling; MenuGui.Enabled=false; MenuGui.Parent=GuiParent
+
+local MainFrame=Instance.new("Frame")
+MainFrame.Size=UDim2.new(0,760,0,540); MainFrame.Position=UDim2.new(0.5,-380,0.5,-270)
+MainFrame.BackgroundColor3=CONFIG.BGColor; MainFrame.BorderSizePixel=0
+MainFrame.Active=true; MainFrame.Draggable=true; MainFrame.Parent=MenuGui
+Instance.new("UICorner",MainFrame).CornerRadius=UDim.new(0,10)
+local mainStroke=Instance.new("UIStroke"); mainStroke.Color=Color3.fromRGB(255,255,255)
+mainStroke.Thickness=1.2; mainStroke.Transparency=0.6; mainStroke.Parent=MainFrame
+
+local TitleBar=Instance.new("Frame"); TitleBar.Size=UDim2.new(1,0,0,46)
+TitleBar.BackgroundColor3=Color3.fromRGB(14,14,18); TitleBar.BorderSizePixel=0; TitleBar.Parent=MainFrame
+Instance.new("UICorner",TitleBar).CornerRadius=UDim.new(0,10)
+local LogoBadge=Instance.new("Frame"); LogoBadge.Size=UDim2.new(0,34,0,34)
+LogoBadge.Position=UDim2.new(0,8,0,6); LogoBadge.BackgroundColor3=Color3.fromRGB(255,255,255)
+LogoBadge.BorderSizePixel=0; LogoBadge.Parent=TitleBar
+Instance.new("UICorner",LogoBadge).CornerRadius=UDim.new(0,6)
+local LogoText=Instance.new("TextLabel"); LogoText.Size=UDim2.new(1,0,1,0)
+LogoText.BackgroundTransparency=1; LogoText.Font=Enum.Font.GothamBold; LogoText.TextSize=13
+LogoText.TextColor3=Color3.fromRGB(14,14,18); LogoText.Text="RK"; LogoText.Parent=LogoBadge
+local TitleLabel=Instance.new("TextLabel"); TitleLabel.Size=UDim2.new(1,-60,1,0)
+TitleLabel.Position=UDim2.new(0,50,0,0); TitleLabel.BackgroundTransparency=1
+TitleLabel.Font=Enum.Font.GothamBold; TitleLabel.TextSize=14; TitleLabel.TextColor3=CONFIG.TextColor
+TitleLabel.TextXAlignment=Enum.TextXAlignment.Left; TitleLabel.Text="RSK Menu  ·  Urban Reload  v2.5"; TitleLabel.Parent=TitleBar
+local SubLabel=Instance.new("TextLabel"); SubLabel.Size=UDim2.new(1,-60,0,14)
+SubLabel.Position=UDim2.new(0,50,0,28); SubLabel.BackgroundTransparency=1
+SubLabel.Font=Enum.Font.Gotham; SubLabel.TextSize=11; SubLabel.TextColor3=CONFIG.DimColor
+SubLabel.TextXAlignment=Enum.TextXAlignment.Left
+SubLabel.Text="Aim · ESP · Silent Aim SS · Unlock · Spectators · Configs · Stream Proof"
+SubLabel.Parent=TitleBar
+local Sep=Instance.new("Frame"); Sep.Size=UDim2.new(1,0,0,1); Sep.Position=UDim2.new(0,0,0,46)
+Sep.BackgroundColor3=Color3.fromRGB(255,255,255); Sep.BackgroundTransparency=0.85
+Sep.BorderSizePixel=0; Sep.Parent=MainFrame
+
+-- ============================================================
+-- TABS
+-- ============================================================
+local TABS={"Combat","ESP","Bypass","Unlock","Misc","Stream","Config"}
+local TabBtns={}; local TabFrames={}; local activeTab="Combat"
+
+local TabBar=Instance.new("Frame"); TabBar.Size=UDim2.new(0,120,1,-48)
+TabBar.Position=UDim2.new(0,0,0,48); TabBar.BackgroundColor3=Color3.fromRGB(14,14,18)
+TabBar.BorderSizePixel=0; TabBar.Parent=MainFrame
+local tabSepV=Instance.new("Frame"); tabSepV.Size=UDim2.new(0,1,1,0)
+tabSepV.BackgroundColor3=Color3.fromRGB(255,255,255); tabSepV.BackgroundTransparency=0.85
+tabSepV.BorderSizePixel=0; tabSepV.Parent=TabBar
+local ContentArea=Instance.new("Frame"); ContentArea.Size=UDim2.new(1,-122,1,-48)
+ContentArea.Position=UDim2.new(0,122,0,48); ContentArea.BackgroundTransparency=1
+ContentArea.BorderSizePixel=0; ContentArea.Parent=MainFrame
+
+local function newTabFrame(name)
+    local f=Instance.new("ScrollingFrame"); f.Size=UDim2.new(1,0,1,0)
+    f.BackgroundTransparency=1; f.BorderSizePixel=0; f.ScrollBarThickness=3
+    f.ScrollBarImageColor3=Color3.fromRGB(255,255,255); f.Visible=(name==activeTab); f.Parent=ContentArea
+    local layout=Instance.new("UIListLayout"); layout.Padding=UDim.new(0,6)
+    layout.SortOrder=Enum.SortOrder.LayoutOrder; layout.Parent=f
+    local pad=Instance.new("UIPadding"); pad.PaddingTop=UDim.new(0,10)
+    pad.PaddingLeft=UDim.new(0,12); pad.PaddingRight=UDim.new(0,12); pad.Parent=f
+    TabFrames[name]=f
+    layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+        f.CanvasSize=UDim2.new(0,0,0,layout.AbsoluteContentSize.Y+20)
+    end)
+end
+local function switchTab(name)
+    activeTab=name
+    for n,f in pairs(TabFrames) do f.Visible=(n==name) end
+    for n,b in pairs(TabBtns) do
+        local isActive=(n==name)
+        local isSpecial=(n=="Config" or n=="Stream")
+        if isActive then
+            b.BackgroundColor3=Color3.fromRGB(255,255,255); b.TextColor3=Color3.fromRGB(14,14,18)
+        else
+            b.BackgroundColor3=Color3.fromRGB(14,14,18)
+            if n=="Stream" then b.TextColor3=Color3.fromRGB(255,160,80)
+            elseif n=="Config" then b.TextColor3=Color3.fromRGB(180,160,255)
+            else b.TextColor3=CONFIG.DimColor end
+        end
+    end
+end
+for i,name in ipairs(TABS) do
+    if name=="Stream" or name=="Config" then
+        local sep2=Instance.new("Frame"); sep2.Size=UDim2.new(1,-10,0,1)
+        sep2.Position=UDim2.new(0,5,0,8+(i-1)*40-4)
+        sep2.BackgroundColor3=Color3.fromRGB(255,255,255); sep2.BackgroundTransparency=0.75
+        sep2.BorderSizePixel=0; sep2.Parent=TabBar
+    end
+    local btn=Instance.new("TextButton"); btn.Size=UDim2.new(1,-10,0,34)
+    btn.Position=UDim2.new(0,5,0,8+(i-1)*40)
+    btn.BackgroundColor3=(name==activeTab) and Color3.fromRGB(255,255,255) or Color3.fromRGB(14,14,18)
+    btn.BorderSizePixel=0; btn.Font=Enum.Font.GothamBold; btn.TextSize=12
+    local tc
+    if name==activeTab then tc=Color3.fromRGB(14,14,18)
+    elseif name=="Stream" then tc=Color3.fromRGB(255,160,80)
+    elseif name=="Config" then tc=Color3.fromRGB(180,160,255)
+    else tc=CONFIG.DimColor end
+    btn.TextColor3=tc; btn.Text=name; btn.AutoButtonColor=false; btn.Parent=TabBar
+    Instance.new("UICorner",btn).CornerRadius=UDim.new(0,6)
+    TabBtns[name]=btn
+    btn.MouseButton1Click:Connect(function() switchTab(name) end)
+    newTabFrame(name)
+end
+
+-- ============================================================
+-- UI BUILDERS
+-- ============================================================
+local function makeSection(parent,text,order)
+    local lbl=Instance.new("TextLabel"); lbl.Size=UDim2.new(1,-4,0,20)
+    lbl.BackgroundTransparency=1; lbl.Font=Enum.Font.GothamBold; lbl.TextSize=11
+    lbl.TextColor3=Color3.fromRGB(255,255,255); lbl.TextXAlignment=Enum.TextXAlignment.Left
+    lbl.Text="  "..string.upper(text); lbl.LayoutOrder=order; lbl.Parent=parent
+end
+local function makeToggle(parent,label,key,order,onChanged)
+    local row=Instance.new("Frame"); row.Size=UDim2.new(1,-4,0,32)
+    row.BackgroundColor3=CONFIG.PanelColor; row.BorderSizePixel=0; row.LayoutOrder=order; row.Parent=parent
+    Instance.new("UICorner",row).CornerRadius=UDim.new(0,6)
+    local lbl=Instance.new("TextLabel"); lbl.Size=UDim2.new(1,-56,1,0)
+    lbl.Position=UDim2.new(0,12,0,0); lbl.BackgroundTransparency=1; lbl.Font=Enum.Font.Gotham
+    lbl.TextSize=12; lbl.TextColor3=CONFIG.TextColor; lbl.TextXAlignment=Enum.TextXAlignment.Left
+    lbl.Text=label; lbl.Parent=row
+    local bg=Instance.new("Frame"); bg.Size=UDim2.new(0,36,0,18); bg.Position=UDim2.new(1,-46,0.5,-9)
+    bg.BackgroundColor3=CONFIG[key] and Color3.fromRGB(255,255,255) or Color3.fromRGB(50,50,60)
+    bg.BorderSizePixel=0; bg.Parent=row; Instance.new("UICorner",bg).CornerRadius=UDim.new(1,0)
+    local knob=Instance.new("Frame"); knob.Size=UDim2.new(0,14,0,14)
+    knob.Position=CONFIG[key] and UDim2.new(1,-16,0.5,-7) or UDim2.new(0,2,0.5,-7)
+    knob.BackgroundColor3=CONFIG[key] and Color3.fromRGB(14,14,18) or Color3.fromRGB(200,200,210)
+    knob.BorderSizePixel=0; knob.Parent=bg; Instance.new("UICorner",knob).CornerRadius=UDim.new(1,0)
+    local function refresh()
+        local on=CONFIG[key]
+        TweenService:Create(bg,TweenInfo.new(0.12),{BackgroundColor3=on and Color3.fromRGB(255,255,255) or Color3.fromRGB(50,50,60)}):Play()
+        TweenService:Create(knob,TweenInfo.new(0.12),{Position=on and UDim2.new(1,-16,0.5,-7) or UDim2.new(0,2,0.5,-7),BackgroundColor3=on and Color3.fromRGB(14,14,18) or Color3.fromRGB(200,200,210)}):Play()
+        if onChanged then onChanged(on) end
+    end
+    local btn=Instance.new("TextButton"); btn.Size=UDim2.new(1,0,1,0)
+    btn.BackgroundTransparency=1; btn.Text=""; btn.Parent=row
+    btn.MouseButton1Click:Connect(function() CONFIG[key]=not CONFIG[key]; refresh() end)
+end
+local function makeSlider(parent,label,key,minV,maxV,order,fmt)
+    local row=Instance.new("Frame"); row.Size=UDim2.new(1,-4,0,48)
+    row.BackgroundColor3=CONFIG.PanelColor; row.BorderSizePixel=0; row.LayoutOrder=order; row.Parent=parent
+    Instance.new("UICorner",row).CornerRadius=UDim.new(0,6)
+    local lbl=Instance.new("TextLabel"); lbl.Size=UDim2.new(0.7,0,0,18); lbl.Position=UDim2.new(0,12,0,4)
+    lbl.BackgroundTransparency=1; lbl.Font=Enum.Font.Gotham; lbl.TextSize=12
+    lbl.TextColor3=CONFIG.TextColor; lbl.TextXAlignment=Enum.TextXAlignment.Left; lbl.Text=label; lbl.Parent=row
+    local valLbl=Instance.new("TextLabel"); valLbl.Size=UDim2.new(0.3,-12,0,18); valLbl.Position=UDim2.new(0.7,0,0,4)
+    valLbl.BackgroundTransparency=1; valLbl.Font=Enum.Font.GothamBold; valLbl.TextSize=12
+    valLbl.TextColor3=Color3.fromRGB(255,255,255); valLbl.TextXAlignment=Enum.TextXAlignment.Right; valLbl.Parent=row
+    local track=Instance.new("Frame"); track.Size=UDim2.new(1,-24,0,4); track.Position=UDim2.new(0,12,0,34)
+    track.BackgroundColor3=Color3.fromRGB(50,50,60); track.BorderSizePixel=0; track.Parent=row
+    Instance.new("UICorner",track).CornerRadius=UDim.new(1,0)
+    local fill=Instance.new("Frame"); fill.BackgroundColor3=Color3.fromRGB(255,255,255)
+    fill.BorderSizePixel=0; fill.Parent=track; Instance.new("UICorner",fill).CornerRadius=UDim.new(1,0)
+    local function setVal(v)
+        v=math.clamp(v,minV,maxV); CONFIG[key]=v
+        fill.Size=UDim2.new((v-minV)/(maxV-minV),0,1,0)
+        valLbl.Text=fmt and string.format(fmt,v) or string.format("%.2f",v)
+    end
+    setVal(CONFIG[key]); local dragging=false
+    track.InputBegan:Connect(function(inp) if inp.UserInputType==Enum.UserInputType.MouseButton1 then dragging=true end end)
+    UserInputService.InputEnded:Connect(function(inp) if inp.UserInputType==Enum.UserInputType.MouseButton1 then dragging=false end end)
+    UserInputService.InputChanged:Connect(function(inp)
+        if dragging and inp.UserInputType==Enum.UserInputType.MouseMovement then
+            local abs=track.AbsolutePosition; local size=track.AbsoluteSize
+            setVal(minV+(maxV-minV)*math.clamp((inp.Position.X-abs.X)/size.X,0,1))
+        end
+    end)
+end
+local function makeKeybind(parent,label,key,order)
+    local row=Instance.new("Frame"); row.Size=UDim2.new(1,-4,0,32)
+    row.BackgroundColor3=CONFIG.PanelColor; row.BorderSizePixel=0; row.LayoutOrder=order; row.Parent=parent
+    Instance.new("UICorner",row).CornerRadius=UDim.new(0,6)
+    local lbl=Instance.new("TextLabel"); lbl.Size=UDim2.new(0.6,0,1,0); lbl.Position=UDim2.new(0,12,0,0)
+    lbl.BackgroundTransparency=1; lbl.Font=Enum.Font.Gotham; lbl.TextSize=12; lbl.TextColor3=CONFIG.TextColor
+    lbl.TextXAlignment=Enum.TextXAlignment.Left; lbl.Text=label; lbl.Parent=row
+    local keyBtn=Instance.new("TextButton"); keyBtn.Size=UDim2.new(0,80,0,22); keyBtn.Position=UDim2.new(1,-88,0.5,-11)
+    keyBtn.BackgroundColor3=Color3.fromRGB(40,40,50); keyBtn.BorderSizePixel=0
+    keyBtn.Font=Enum.Font.GothamBold; keyBtn.TextSize=11; keyBtn.TextColor3=Color3.fromRGB(255,255,255)
+    keyBtn.Text=tostring(CONFIG[key]):gsub("Enum.KeyCode.",""); keyBtn.AutoButtonColor=false; keyBtn.Parent=row
+    Instance.new("UICorner",keyBtn).CornerRadius=UDim.new(0,4)
+    local listening=false
+    keyBtn.MouseButton1Click:Connect(function() listening=true; keyBtn.Text="..."; keyBtn.TextColor3=Color3.fromRGB(255,255,100) end)
+    UserInputService.InputBegan:Connect(function(inp)
+        if listening and inp.UserInputType==Enum.UserInputType.Keyboard then
+            CONFIG[key]=inp.KeyCode; keyBtn.Text=tostring(inp.KeyCode):gsub("Enum.KeyCode.","")
+            keyBtn.TextColor3=Color3.fromRGB(255,255,255); listening=false
+        end
+    end)
+end
+local function makeIntInput(parent,label,key,order)
+    local row=Instance.new("Frame"); row.Size=UDim2.new(1,-4,0,32)
+    row.BackgroundColor3=CONFIG.PanelColor; row.BorderSizePixel=0; row.LayoutOrder=order; row.Parent=parent
+    Instance.new("UICorner",row).CornerRadius=UDim.new(0,6)
+    local lbl=Instance.new("TextLabel"); lbl.Size=UDim2.new(0.7,0,1,0); lbl.Position=UDim2.new(0,12,0,0)
+    lbl.BackgroundTransparency=1; lbl.Font=Enum.Font.Gotham; lbl.TextSize=12; lbl.TextColor3=CONFIG.TextColor
+    lbl.TextXAlignment=Enum.TextXAlignment.Left; lbl.Text=label; lbl.Parent=row
+    local box=Instance.new("TextBox"); box.Size=UDim2.new(0,50,0,22); box.Position=UDim2.new(1,-58,0.5,-11)
+    box.BackgroundColor3=Color3.fromRGB(40,40,50); box.BorderSizePixel=0
+    box.Font=Enum.Font.GothamBold; box.TextSize=12; box.TextColor3=Color3.fromRGB(255,255,255)
+    box.Text=tostring(CONFIG[key]); box.ClearTextOnFocus=false; box.Parent=row
+    Instance.new("UICorner",box).CornerRadius=UDim.new(0,4)
+    box.FocusLost:Connect(function()
+        local v=tonumber(box.Text)
+        if v and v>=1 and v<=10 then CONFIG[key]=math.floor(v) end
+        box.Text=tostring(CONFIG[key])
+    end)
+end
+local function makeStatusLabel(parent,order)
+    local l=Instance.new("TextLabel"); l.Size=UDim2.new(1,-4,0,18); l.BackgroundTransparency=1
+    l.Font=Enum.Font.Gotham; l.TextSize=11; l.TextColor3=CONFIG.DimColor
+    l.TextXAlignment=Enum.TextXAlignment.Center; l.Text=""; l.LayoutOrder=order; l.Parent=parent
+    return l
+end
+local function makeActionButton(parent,label,order,color,textColor,onClick)
+    local btn=Instance.new("TextButton"); btn.Size=UDim2.new(1,-4,0,40)
+    btn.BackgroundColor3=color; btn.BorderSizePixel=0; btn.Font=Enum.Font.GothamBold
+    btn.TextSize=13; btn.TextColor3=textColor; btn.Text=label
+    btn.AutoButtonColor=false; btn.LayoutOrder=order; btn.Parent=parent
+    Instance.new("UICorner",btn).CornerRadius=UDim.new(0,8)
+    local stroke=Instance.new("UIStroke"); stroke.Color=textColor; stroke.Thickness=1
+    stroke.Transparency=0.7; stroke.Parent=btn
+    btn.MouseButton1Click:Connect(function()
+        TweenService:Create(btn,TweenInfo.new(0.08),{BackgroundColor3=color:Lerp(Color3.fromRGB(255,255,255),0.15)}):Play()
+        task.delay(0.15,function() TweenService:Create(btn,TweenInfo.new(0.08),{BackgroundColor3=color}):Play() end)
+        if onClick then pcall(onClick) end
+    end)
+    return btn
+end
+
+-- ============================================================
+-- COMBAT TAB
+-- ============================================================
+local cF=TabFrames["Combat"]
+makeSection(cF,"Aimbot",1); makeToggle(cF,"Enable Aimbot","AimbotEnabled",2)
+makeToggle(cF,"Hold / Toggle","AimHoldMode",3); makeKeybind(cF,"Aim Key","AimKey",4)
+makeToggle(cF,"Silent Aim (cam)","SilentAim",5); makeToggle(cF,"Magic Bullet","MagicBullet",6)
+makeToggle(cF,"Visible Only","VisibleOnly",7); makeSection(cF,"Réglages",8)
+makeSlider(cF,"FOV (px)","AimFOV",10,500,9,"%d")
+makeSlider(cF,"Smoothing","AimSmoothing",0,1,10,"%.2f")
+makeSlider(cF,"Ceiling Time (s)","CeilingTime",0,0.5,11,"%.3f")
+
+-- ============================================================
+-- ESP TAB
+-- ============================================================
+local eF=TabFrames["ESP"]
+makeSection(eF,"Affichage",1); makeToggle(eF,"Enable ESP","ESPEnabled",2)
+makeToggle(eF,"Skeleton","SkeletonEnabled",3); makeToggle(eF,"Nametag","NametagEnabled",4)
+makeToggle(eF,"Box ESP","BoxEnabled",5); makeToggle(eF,"Barre de vie","HealthBarEnabled",6)
+makeToggle(eF,"Distance (studs)","DistanceEnabled",7)
+
+-- ============================================================
+-- BYPASS TAB
+-- ============================================================
+local bF=TabFrames["Bypass"]
+makeSection(bF,"Remote Hook",1); makeToggle(bF,"Silent Aim Serveur","SilentAim",2)
+makeToggle(bF,"Dump Remote (console)","DumpRemote",3)
+makeIntInput(bF,"Arg direction (index)","RemoteArgDir",4)
+makeIntInput(bF,"Arg hitPart  (index)","RemoteArgPart",5)
+local infoHook=Instance.new("TextLabel"); infoHook.Size=UDim2.new(1,-4,0,90)
+infoHook.BackgroundColor3=CONFIG.PanelColor; infoHook.BorderSizePixel=0
+infoHook.Font=Enum.Font.Gotham; infoHook.TextSize=11; infoHook.TextColor3=CONFIG.DimColor
+infoHook.TextWrapped=true; infoHook.TextXAlignment=Enum.TextXAlignment.Left
+infoHook.Text="1. Active Dump Remote\n2. Lance le jeu et tire 2-3 balles\n3. Lis la console (F9) -> note les index\n4. Mets les bons index ci-dessus\n5. Desactive Dump, active Silent Aim Serveur"
+infoHook.LayoutOrder=6; infoHook.Parent=bF
+Instance.new("UICorner",infoHook).CornerRadius=UDim.new(0,6)
+local ihp=Instance.new("UIPadding",infoHook); ihp.PaddingLeft=UDim.new(0,10); ihp.PaddingTop=UDim.new(0,8)
+
+-- ============================================================
+-- UNLOCK TAB
+-- ============================================================
+local uF=TabFrames["Unlock"]
+local weaponBanner=Instance.new("Frame"); weaponBanner.Size=UDim2.new(1,-4,0,38)
+weaponBanner.BackgroundColor3=Color3.fromRGB(30,30,40); weaponBanner.BorderSizePixel=0
+weaponBanner.LayoutOrder=1; weaponBanner.Parent=uF
+Instance.new("UICorner",weaponBanner).CornerRadius=UDim.new(0,8)
+local weaponStroke=Instance.new("UIStroke"); weaponStroke.Color=Color3.fromRGB(180,160,255)
+weaponStroke.Thickness=1.2; weaponStroke.Transparency=0.5; weaponStroke.Parent=weaponBanner
+local weaponNameLbl=Instance.new("TextLabel"); weaponNameLbl.Size=UDim2.new(1,-20,1,0)
+weaponNameLbl.Position=UDim2.new(0,12,0,0); weaponNameLbl.BackgroundTransparency=1
+weaponNameLbl.Font=Enum.Font.GothamBold; weaponNameLbl.TextSize=13
+weaponNameLbl.TextColor3=Color3.fromRGB(180,180,190); weaponNameLbl.TextXAlignment=Enum.TextXAlignment.Left
+weaponNameLbl.Text="Aucune arme équipée"; weaponNameLbl.Parent=weaponBanner
+local unlockStatus=Instance.new("TextLabel"); unlockStatus.Size=UDim2.new(1,-4,0,18)
+unlockStatus.BackgroundTransparency=1; unlockStatus.Font=Enum.Font.Gotham; unlockStatus.TextSize=11
+unlockStatus.TextColor3=CONFIG.DimColor; unlockStatus.TextXAlignment=Enum.TextXAlignment.Center
+unlockStatus.Text=""; unlockStatus.LayoutOrder=2; unlockStatus.Parent=uF
+local function setUnlockStatus(msg,ok)
+    unlockStatus.Text=msg
+    unlockStatus.TextColor3=ok and Color3.fromRGB(80,255,120) or Color3.fromRGB(255,100,100)
+    task.delay(3,function() unlockStatus.Text="" end)
+end
+local UNLOCK_SUBTABS={"Camo","Laser","Optique","Canon","Chargeur","Stock"}
+local unlockSubBtns={}; local unlockSubFrames={}; local activeUnlockSub="Camo"
+local subTabBar=Instance.new("Frame"); subTabBar.Size=UDim2.new(1,-4,0,32)
+subTabBar.BackgroundColor3=Color3.fromRGB(14,14,18); subTabBar.BorderSizePixel=0
+subTabBar.LayoutOrder=3; subTabBar.Parent=uF
+Instance.new("UICorner",subTabBar).CornerRadius=UDim.new(0,6)
+local subTabLayout=Instance.new("UIListLayout"); subTabLayout.FillDirection=Enum.FillDirection.Horizontal
+subTabLayout.Padding=UDim.new(0,4); subTabLayout.SortOrder=Enum.SortOrder.LayoutOrder
+subTabLayout.VerticalAlignment=Enum.VerticalAlignment.Center; subTabLayout.Parent=subTabBar
+local subTabPad=Instance.new("UIPadding"); subTabPad.PaddingLeft=UDim.new(0,4)
+subTabPad.PaddingRight=UDim.new(0,4); subTabPad.PaddingTop=UDim.new(0,3)
+subTabPad.PaddingBottom=UDim.new(0,3); subTabPad.Parent=subTabBar
+local subContentArea=Instance.new("Frame"); subContentArea.Size=UDim2.new(1,-4,0,340)
+subContentArea.BackgroundTransparency=1; subContentArea.BorderSizePixel=0
+subContentArea.LayoutOrder=4; subContentArea.Parent=uF
+local function newUnlockSubFrame(name)
+    local f=Instance.new("ScrollingFrame"); f.Size=UDim2.new(1,0,1,0)
+    f.BackgroundTransparency=1; f.BorderSizePixel=0; f.ScrollBarThickness=3
+    f.ScrollBarImageColor3=Color3.fromRGB(255,255,255); f.Visible=(name==activeUnlockSub); f.Parent=subContentArea
+    local layout=Instance.new("UIListLayout"); layout.Padding=UDim.new(0,5)
+    layout.SortOrder=Enum.SortOrder.LayoutOrder; layout.Parent=f
+    local pad=Instance.new("UIPadding"); pad.PaddingTop=UDim.new(0,8)
+    pad.PaddingLeft=UDim.new(0,6); pad.PaddingRight=UDim.new(0,6); pad.Parent=f
+    unlockSubFrames[name]=f
+    layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+        f.CanvasSize=UDim2.new(0,0,0,layout.AbsoluteContentSize.Y+20)
+    end)
+end
+local function switchUnlockSub(name)
+    activeUnlockSub=name
+    for n,f in pairs(unlockSubFrames) do f.Visible=(n==name) end
+    for n,b in pairs(unlockSubBtns) do
+        if n==name then b.BackgroundColor3=Color3.fromRGB(255,255,255); b.TextColor3=Color3.fromRGB(14,14,18)
+        else b.BackgroundColor3=Color3.fromRGB(35,35,45); b.TextColor3=CONFIG.DimColor end
+    end
+end
+for si,sname in ipairs(UNLOCK_SUBTABS) do
+    local sbtn=Instance.new("TextButton"); sbtn.Size=UDim2.new(1/#UNLOCK_SUBTABS,-6,1,0)
+    sbtn.BackgroundColor3=(sname==activeUnlockSub) and Color3.fromRGB(255,255,255) or Color3.fromRGB(35,35,45)
+    sbtn.BorderSizePixel=0; sbtn.Font=Enum.Font.GothamBold; sbtn.TextSize=11
+    sbtn.TextColor3=(sname==activeUnlockSub) and Color3.fromRGB(14,14,18) or CONFIG.DimColor
+    sbtn.Text=sname; sbtn.AutoButtonColor=false; sbtn.LayoutOrder=si; sbtn.Parent=subTabBar
+    Instance.new("UICorner",sbtn).CornerRadius=UDim.new(0,5)
+    unlockSubBtns[sname]=sbtn
+    sbtn.MouseButton1Click:Connect(function() switchUnlockSub(sname) end)
+    newUnlockSubFrame(sname)
+end
+local function makeUnlockGrid(subFrameName,items)
+    local parent=unlockSubFrames[subFrameName]
+    local allRow=Instance.new("TextButton"); allRow.Size=UDim2.new(1,0,0,32)
+    allRow.BackgroundColor3=Color3.fromRGB(50,40,80); allRow.BorderSizePixel=0
+    allRow.Font=Enum.Font.GothamBold; allRow.TextSize=12
+    allRow.TextColor3=Color3.fromRGB(200,180,255); allRow.Text="🔓  Unlock TOUT — "..subFrameName
+    allRow.AutoButtonColor=false; allRow.LayoutOrder=1; allRow.Parent=parent
+    Instance.new("UICorner",allRow).CornerRadius=UDim.new(0,6)
+    allRow.MouseButton1Click:Connect(function()
+        local weapon=getWeaponName() or "current"; local fired=0
+        for _,item in ipairs(items) do
+            task.spawn(function()
+                local ok,_=fireRemote(item.remote,weapon,item.slot or "",item.id)
+                if ok then fired=fired+1 end
+            end)
+        end
+        task.delay(0.5,function()
+            setUnlockStatus(string.format("✓ %d/%d unlockés sur %s",fired,#items,weapon),true)
+        end)
+    end)
+    local sep=Instance.new("Frame"); sep.Size=UDim2.new(1,0,0,1)
+    sep.BackgroundColor3=Color3.fromRGB(255,255,255); sep.BackgroundTransparency=0.85
+    sep.BorderSizePixel=0; sep.LayoutOrder=2; sep.Parent=parent
+    local grid=Instance.new("Frame"); grid.Size=UDim2.new(1,0,0,10)
+    grid.BackgroundTransparency=1; grid.BorderSizePixel=0; grid.LayoutOrder=3; grid.Parent=parent
+    local gridLayout=Instance.new("UIGridLayout"); gridLayout.CellSize=UDim2.new(0.5,-4,0,36)
+    gridLayout.CellPadding=UDim2.new(0,6,0,5); gridLayout.SortOrder=Enum.SortOrder.LayoutOrder
+    gridLayout.Parent=grid
+    gridLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+        grid.Size=UDim2.new(1,0,0,gridLayout.AbsoluteContentSize.Y)
+    end)
+    for gi,item in ipairs(items) do
+        local it=item
+        local cell=Instance.new("TextButton"); cell.Size=UDim2.new(0,1,0,1)
+        cell.BackgroundColor3=Color3.fromRGB(32,32,42); cell.BorderSizePixel=0
+        cell.Font=Enum.Font.GothamBold; cell.TextSize=11
+        cell.TextColor3=Color3.fromRGB(220,220,220); cell.Text=it.label
+        cell.AutoButtonColor=false; cell.LayoutOrder=gi; cell.Parent=grid
+        Instance.new("UICorner",cell).CornerRadius=UDim.new(0,6)
+        local cellStroke=Instance.new("UIStroke"); cellStroke.Color=Color3.fromRGB(255,255,255)
+        cellStroke.Thickness=1; cellStroke.Transparency=0.85; cellStroke.Parent=cell
+        cell.MouseButton1Click:Connect(function()
+            local weapon=getWeaponName()
+            if not weapon then setUnlockStatus("✗ Prends une arme en main d'abord",false); return end
+            TweenService:Create(cell,TweenInfo.new(0.08),{BackgroundColor3=Color3.fromRGB(60,50,100)}):Play()
+            task.delay(0.2,function() TweenService:Create(cell,TweenInfo.new(0.08),{BackgroundColor3=Color3.fromRGB(32,32,42)}):Play() end)
+            local ok,msg=fireRemote(it.remote,weapon,it.slot or "",it.id)
+            setUnlockStatus(ok and string.format("✓ %s → %s sur %s",subFrameName,it.label,weapon)
+                or string.format("✗ %s : %s",it.label,msg),ok)
+        end)
+    end
+end
+makeUnlockGrid("Camo",CAMOS); makeUnlockGrid("Laser",ATTACHMENTS.Laser)
+makeUnlockGrid("Optique",ATTACHMENTS.Optique); makeUnlockGrid("Canon",ATTACHMENTS.Canon)
+makeUnlockGrid("Chargeur",ATTACHMENTS.Chargeur); makeUnlockGrid("Stock",ATTACHMENTS.Stock)
+local lastWeapon=""
+RunService.Heartbeat:Connect(function()
+    local w=getWeaponName() or ""
+    if w~=lastWeapon then
+        lastWeapon=w
+        weaponNameLbl.Text=w~="" and ("🔫  "..w) or "Aucune arme équipée"
+        weaponNameLbl.TextColor3=w~="" and Color3.fromRGB(180,255,160) or Color3.fromRGB(180,180,190)
+    end
+end)
+
+-- ============================================================
+-- MISC TAB
+-- ============================================================
+local mF=TabFrames["Misc"]
+makeSection(mF,"Overlay titre",1); makeToggle(mF,"Afficher overlay titre","OverlayEnabled",2)
+makeSection(mF,"Spectateurs",3); makeToggle(mF,"Overlay spectateurs","SpectatorOverlay",4)
+local specNote=Instance.new("TextLabel"); specNote.Size=UDim2.new(1,-4,0,44)
+specNote.BackgroundColor3=CONFIG.PanelColor; specNote.BorderSizePixel=0
+specNote.Font=Enum.Font.Gotham; specNote.TextSize=10; specNote.TextColor3=CONFIG.DimColor
+specNote.TextWrapped=true; specNote.TextXAlignment=Enum.TextXAlignment.Left
+specNote.Text="Overlay spectateurs draggable. Pseudo + distance.\nSource: attribut SpectatingTarget ou _G.RSK_Spectators."
+specNote.LayoutOrder=5; specNote.Parent=mF
+Instance.new("UICorner",specNote).CornerRadius=UDim.new(0,6)
+local snp=Instance.new("UIPadding",specNote); snp.PaddingLeft=UDim.new(0,10); snp.PaddingTop=UDim.new(0,8)
+
+-- ============================================================
+-- STREAM TAB  (onglet séparé, texte orange dans la sidebar)
+-- ============================================================
+local stF=TabFrames["Stream"]
+
+-- bandeau statut stream
+local streamBanner=Instance.new("Frame"); streamBanner.Size=UDim2.new(1,-4,0,50)
+streamBanner.BackgroundColor3=Color3.fromRGB(40,25,10); streamBanner.BorderSizePixel=0
+streamBanner.LayoutOrder=1; streamBanner.Parent=stF
+Instance.new("UICorner",streamBanner).CornerRadius=UDim.new(0,8)
+local streamStroke=Instance.new("UIStroke"); streamStroke.Color=Color3.fromRGB(255,160,80)
+streamStroke.Thickness=1.5; streamStroke.Transparency=0.4; streamStroke.Parent=streamBanner
+local streamStatusLbl=Instance.new("TextLabel"); streamStatusLbl.Size=UDim2.new(1,-20,1,0)
+streamStatusLbl.Position=UDim2.new(0,12,0,0); streamStatusLbl.BackgroundTransparency=1
+streamStatusLbl.Font=Enum.Font.GothamBold; streamStatusLbl.TextSize=13
+streamStatusLbl.TextColor3=Color3.fromRGB(255,160,80); streamStatusLbl.TextXAlignment=Enum.TextXAlignment.Left
+streamStatusLbl.Text="🎥  Stream Proof  —  INACTIF"; streamStatusLbl.Parent=streamBanner
+
+local function refreshStreamBanner()
+    if streamActive then
+        streamStatusLbl.Text="🎥  Stream Proof  —  ACTIF ✓"
+        streamStatusLbl.TextColor3=Color3.fromRGB(80,255,120)
+        streamStroke.Color=Color3.fromRGB(80,255,120)
+    else
+        streamStatusLbl.Text="🎥  Stream Proof  —  INACTIF"
+        streamStatusLbl.TextColor3=Color3.fromRGB(255,160,80)
+        streamStroke.Color=Color3.fromRGB(255,160,80)
+    end
+end
+
+-- explication
+local streamInfo=Instance.new("TextLabel"); streamInfo.Size=UDim2.new(1,-4,0,80)
+streamInfo.BackgroundColor3=CONFIG.PanelColor; streamInfo.BorderSizePixel=0
+streamInfo.Font=Enum.Font.Gotham; streamInfo.TextSize=11; streamInfo.TextColor3=CONFIG.DimColor
+streamInfo.TextWrapped=true; streamInfo.TextXAlignment=Enum.TextXAlignment.Left
+streamInfo.Text="Le Stream Proof cache tous les éléments visuels du cheat (menus, ESP overlay, spectateurs) sans désactiver les fonctionnalités actives.\n\nOBS · Medal · Shadowplay · Discord · GeForce Experience ne capturent que le rendu Roblox — le cheat continue de fonctionner invisiblement."
+streamInfo.LayoutOrder=2; streamInfo.Parent=stF
+Instance.new("UICorner",streamInfo).CornerRadius=UDim.new(0,6)
+local sip=Instance.new("UIPadding",streamInfo); sip.PaddingLeft=UDim.new(0,10); sip.PaddingTop=UDim.new(0,8)
+
+-- section touches
+makeSection(stF,"Touches",3)
+
+-- StreamKey toggle (active/désactive le mode stream)
+local streamKeyRow=Instance.new("Frame"); streamKeyRow.Size=UDim2.new(1,-4,0,32)
+streamKeyRow.BackgroundColor3=CONFIG.PanelColor; streamKeyRow.BorderSizePixel=0
+streamKeyRow.LayoutOrder=4; streamKeyRow.Parent=stF
+Instance.new("UICorner",streamKeyRow).CornerRadius=UDim.new(0,6)
+local streamKeyLbl=Instance.new("TextLabel"); streamKeyLbl.Size=UDim2.new(0.6,0,1,0)
+streamKeyLbl.Position=UDim2.new(0,12,0,0); streamKeyLbl.BackgroundTransparency=1
+streamKeyLbl.Font=Enum.Font.Gotham; streamKeyLbl.TextSize=12; streamKeyLbl.TextColor3=CONFIG.TextColor
+streamKeyLbl.TextXAlignment=Enum.TextXAlignment.Left; streamKeyLbl.Text="Stream Key (toggle)"; streamKeyLbl.Parent=streamKeyRow
+local streamKeyBtn=Instance.new("TextButton"); streamKeyBtn.Size=UDim2.new(0,80,0,22)
+streamKeyBtn.Position=UDim2.new(1,-88,0.5,-11); streamKeyBtn.BackgroundColor3=Color3.fromRGB(40,40,50)
+streamKeyBtn.BorderSizePixel=0; streamKeyBtn.Font=Enum.Font.GothamBold; streamKeyBtn.TextSize=11
+streamKeyBtn.TextColor3=Color3.fromRGB(255,255,255)
+streamKeyBtn.Text=tostring(CONFIG.StreamKey):gsub("Enum.KeyCode.","")
+streamKeyBtn.AutoButtonColor=false; streamKeyBtn.Parent=streamKeyRow
+Instance.new("UICorner",streamKeyBtn).CornerRadius=UDim.new(0,4)
+local streamKeyListening=false
+streamKeyBtn.MouseButton1Click:Connect(function()
+    streamKeyListening=true; streamKeyBtn.Text="..."; streamKeyBtn.TextColor3=Color3.fromRGB(255,255,100)
+end)
+
+-- PanicKey (cache tout, maintien = tout cache)
+local panicKeyRow=Instance.new("Frame"); panicKeyRow.Size=UDim2.new(1,-4,0,32)
+panicKeyRow.BackgroundColor3=CONFIG.PanelColor; panicKeyRow.BorderSizePixel=0
+panicKeyRow.LayoutOrder=5; panicKeyRow.Parent=stF
+Instance.new("UICorner",panicKeyRow).CornerRadius=UDim.new(0,6)
+local panicKeyLbl=Instance.new("TextLabel"); panicKeyLbl.Size=UDim2.new(0.6,0,1,0)
+panicKeyLbl.Position=UDim2.new(0,12,0,0); panicKeyLbl.BackgroundTransparency=1
+panicKeyLbl.Font=Enum.Font.Gotham; panicKeyLbl.TextSize=12; panicKeyLbl.TextColor3=CONFIG.TextColor
+panicKeyLbl.TextXAlignment=Enum.TextXAlignment.Left; panicKeyLbl.Text="Panic Key (hold = tout caché)"; panicKeyLbl.Parent=panicKeyRow
+local panicKeyBtn=Instance.new("TextButton"); panicKeyBtn.Size=UDim2.new(0,80,0,22)
+panicKeyBtn.Position=UDim2.new(1,-88,0.5,-11); panicKeyBtn.BackgroundColor3=Color3.fromRGB(60,20,20)
+panicKeyBtn.BorderSizePixel=0; panicKeyBtn.Font=Enum.Font.GothamBold; panicKeyBtn.TextSize=11
+panicKeyBtn.TextColor3=Color3.fromRGB(255,100,100)
+panicKeyBtn.Text=tostring(CONFIG.PanicKey):gsub("Enum.KeyCode.","")
+panicKeyBtn.AutoButtonColor=false; panicKeyBtn.Parent=panicKeyRow
+Instance.new("UICorner",panicKeyBtn).CornerRadius=UDim.new(0,4)
+local panicKeyListening=false
+panicKeyBtn.MouseButton1Click:Connect(function()
+    panicKeyListening=true; panicKeyBtn.Text="..."; panicKeyBtn.TextColor3=Color3.fromRGB(255,255,100)
+end)
+
+-- section options
+makeSection(stF,"Options",6)
+makeToggle(stF,"Auto-hide si Alt+Tab","AutoHideOnAlt",7)
+
+-- section boutons rapides
+makeSection(stF,"Actions rapides",8)
+local btnStreamToggle=makeActionButton(stF,"🎥  Activer / Désactiver Stream Proof",9,
+    Color3.fromRGB(40,25,10),Color3.fromRGB(255,160,80),function()
+        if streamActive then exitStreamMode() else enterStreamMode() end
+        refreshStreamBanner()
+        -- ré-ouvre le menu après exit
+        if not streamActive then
+            CONFIG.MenuOpen=true; MenuGui.Enabled=true
+        end
+    end)
+
+makeActionButton(stF,"💀  PANIC — Tout cacher maintenant",10,
+    Color3.fromRGB(50,10,10),Color3.fromRGB(255,80,80),function()
+        panicHide()
+        CONFIG.MenuOpen=false; MenuGui.Enabled=false
+    end)
+
+makeActionButton(stF,"✅  Restore — Tout réafficher",11,
+    Color3.fromRGB(10,40,20),Color3.fromRGB(80,255,120),function()
+        panicRestore()
+        if not streamActive then
+            CONFIG.MenuOpen=true; MenuGui.Enabled=true
+        end
+    end)
+
+-- note executor
+local streamNote=Instance.new("TextLabel"); streamNote.Size=UDim2.new(1,-4,0,54)
+streamNote.BackgroundColor3=CONFIG.PanelColor; streamNote.BorderSizePixel=0
+streamNote.Font=Enum.Font.Gotham; streamNote.TextSize=10; streamNote.TextColor3=CONFIG.DimColor
+streamNote.TextWrapped=true; streamNote.TextXAlignment=Enum.TextXAlignment.Left
+streamNote.Text="Note : un vrai screen-proof GPU-level nécessite Synapse X (option intégrée) ou Solara.\nCe stream proof cache le GUI Roblox — suffisant pour OBS/Medal si le jeu est en mode fenêtré ou borderless."
+streamNote.LayoutOrder=12; streamNote.Parent=stF
+Instance.new("UICorner",streamNote).CornerRadius=UDim.new(0,6)
+local stnp=Instance.new("UIPadding",streamNote); stnp.PaddingLeft=UDim.new(0,10); stnp.PaddingTop=UDim.new(0,8)
+
+-- ============================================================
+-- CONFIG TAB
+-- ============================================================
+local cfgF=TabFrames["Config"]
+local selectedProfile=nil; local cfgStatusLbl=nil; local profileListFrame=nil; local profileRows={}
+local function cfgStatus(msg,ok)
+    if not cfgStatusLbl then return end
+    cfgStatusLbl.Text=msg
+    cfgStatusLbl.TextColor3=ok and Color3.fromRGB(80,255,120) or Color3.fromRGB(255,100,100)
+    task.delay(3,function() cfgStatusLbl.Text="" end)
+end
+makeSection(cfgF,"Presets",1)
+local presetNote2=Instance.new("TextLabel"); presetNote2.Size=UDim2.new(1,-4,0,22)
+presetNote2.BackgroundTransparency=1; presetNote2.Font=Enum.Font.Gotham; presetNote2.TextSize=11
+presetNote2.TextColor3=CONFIG.DimColor; presetNote2.TextXAlignment=Enum.TextXAlignment.Left
+presetNote2.Text="  Applique immédiatement, pas de sauvegarde fichier."
+presetNote2.LayoutOrder=2; presetNote2.Parent=cfgF
+local pOrder=3
+for pName,pData in pairs(PRESETS) do
+    local pd=pData; local pn=pName
+    local pRow=Instance.new("Frame"); pRow.Size=UDim2.new(1,-4,0,36)
+    pRow.BackgroundColor3=CONFIG.PanelColor; pRow.BorderSizePixel=0; pRow.LayoutOrder=pOrder; pRow.Parent=cfgF
+    Instance.new("UICorner",pRow).CornerRadius=UDim.new(0,6)
+    local pLabel=Instance.new("TextLabel"); pLabel.Size=UDim2.new(1,-100,1,0); pLabel.Position=UDim2.new(0,12,0,0)
+    pLabel.BackgroundTransparency=1; pLabel.Font=Enum.Font.GothamBold; pLabel.TextSize=12
+    pLabel.TextColor3=CONFIG.TextColor; pLabel.TextXAlignment=Enum.TextXAlignment.Left; pLabel.Text=pn; pLabel.Parent=pRow
+    -- couleur accent selon preset
+    local pAccent=Color3.fromRGB(200,180,255)
+    if pn=="Rage" then pAccent=Color3.fromRGB(255,100,100)
+    elseif pn=="Legit" then pAccent=Color3.fromRGB(100,220,255)
+    elseif pn=="Stream" then pAccent=Color3.fromRGB(255,160,80) end
+    local pBtn=Instance.new("TextButton"); pBtn.Size=UDim2.new(0,80,0,24); pBtn.Position=UDim2.new(1,-88,0.5,-12)
+    pBtn.BackgroundColor3=pAccent:Lerp(Color3.fromRGB(14,14,18),0.7); pBtn.BorderSizePixel=0
+    pBtn.Font=Enum.Font.GothamBold; pBtn.TextSize=11; pBtn.TextColor3=pAccent
+    pBtn.Text="Appliquer"; pBtn.AutoButtonColor=false; pBtn.Parent=pRow
+    Instance.new("UICorner",pBtn).CornerRadius=UDim.new(0,4)
+    pBtn.MouseButton1Click:Connect(function()
+        applyProfile(pd)
+        if pd.StreamMode then enterStreamMode() else exitStreamMode() end
+        refreshStreamBanner()
+        TweenService:Create(pBtn,TweenInfo.new(0.08),{BackgroundColor3=pAccent:Lerp(Color3.fromRGB(255,255,255),0.2)}):Play()
+        task.delay(0.2,function() TweenService:Create(pBtn,TweenInfo.new(0.08),{BackgroundColor3=pAccent:Lerp(Color3.fromRGB(14,14,18),0.7)}):Play() end)
+        cfgStatus('✓ Preset "'..pn..'" appliqué',true)
+    end)
+    pOrder=pOrder+1
+end
+makeSection(cfgF,"Mes configs",10)
+local newCfgRow=Instance.new("Frame"); newCfgRow.Size=UDim2.new(1,-4,0,36)
+newCfgRow.BackgroundColor3=CONFIG.PanelColor; newCfgRow.BorderSizePixel=0; newCfgRow.LayoutOrder=11; newCfgRow.Parent=cfgF
+Instance.new("UICorner",newCfgRow).CornerRadius=UDim.new(0,6)
+local newCfgBox=Instance.new("TextBox"); newCfgBox.Size=UDim2.new(1,-120,0,24); newCfgBox.Position=UDim2.new(0,10,0.5,-12)
+newCfgBox.BackgroundColor3=Color3.fromRGB(40,40,50); newCfgBox.BorderSizePixel=0
+newCfgBox.Font=Enum.Font.Gotham; newCfgBox.TextSize=12; newCfgBox.TextColor3=Color3.fromRGB(255,255,255)
+newCfgBox.PlaceholderText="Nom de la config..."; newCfgBox.PlaceholderColor3=Color3.fromRGB(80,80,90)
+newCfgBox.Text=""; newCfgBox.ClearTextOnFocus=false; newCfgBox.Parent=newCfgRow
+Instance.new("UICorner",newCfgBox).CornerRadius=UDim.new(0,4)
+local saveBtn=Instance.new("TextButton"); saveBtn.Size=UDim2.new(0,96,0,24); saveBtn.Position=UDim2.new(1,-104,0.5,-12)
+saveBtn.BackgroundColor3=Color3.fromRGB(40,80,50); saveBtn.BorderSizePixel=0
+saveBtn.Font=Enum.Font.GothamBold; saveBtn.TextSize=11; saveBtn.TextColor3=Color3.fromRGB(120,255,150)
+saveBtn.Text="💾 Sauvegarder"; saveBtn.AutoButtonColor=false; saveBtn.Parent=newCfgRow
+Instance.new("UICorner",saveBtn).CornerRadius=UDim.new(0,4)
+cfgStatusLbl=Instance.new("TextLabel"); cfgStatusLbl.Size=UDim2.new(1,-4,0,18); cfgStatusLbl.BackgroundTransparency=1
+cfgStatusLbl.Font=Enum.Font.Gotham; cfgStatusLbl.TextSize=11; cfgStatusLbl.TextColor3=CONFIG.DimColor
+cfgStatusLbl.TextXAlignment=Enum.TextXAlignment.Center; cfgStatusLbl.Text=""
+cfgStatusLbl.LayoutOrder=12; cfgStatusLbl.Parent=cfgF
+makeSection(cfgF,"Profils sauvegardés",13)
+profileListFrame=Instance.new("Frame"); profileListFrame.Size=UDim2.new(1,-4,0,10)
+profileListFrame.BackgroundTransparency=1; profileListFrame.BorderSizePixel=0
+profileListFrame.LayoutOrder=14; profileListFrame.Parent=cfgF
+local plLayout=Instance.new("UIListLayout"); plLayout.Padding=UDim.new(0,5)
+plLayout.SortOrder=Enum.SortOrder.LayoutOrder; plLayout.Parent=profileListFrame
+plLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+    profileListFrame.Size=UDim2.new(1,-4,0,plLayout.AbsoluteContentSize.Y)
+end)
+local cfgNote=Instance.new("TextLabel"); cfgNote.Size=UDim2.new(1,-4,0,44)
+cfgNote.BackgroundColor3=CONFIG.PanelColor; cfgNote.BorderSizePixel=0
+cfgNote.Font=Enum.Font.Gotham; cfgNote.TextSize=10; cfgNote.TextColor3=CONFIG.DimColor
+cfgNote.TextWrapped=true; cfgNote.TextXAlignment=Enum.TextXAlignment.Left
+cfgNote.Text="Configs dans RSK_Configs/ via writefile.\nSi ton executor ne supporte pas writefile, seuls les presets fonctionnent."
+cfgNote.LayoutOrder=15; cfgNote.Parent=cfgF
+Instance.new("UICorner",cfgNote).CornerRadius=UDim.new(0,6)
+local cnp=Instance.new("UIPadding",cfgNote); cnp.PaddingLeft=UDim.new(0,10); cnp.PaddingTop=UDim.new(0,8)
+local function rebuildProfileList()
+    for _,r in ipairs(profileRows) do r.frame:Destroy() end; profileRows={}
+    local names=listSavedProfiles()
+    if #names==0 then
+        local empty=Instance.new("TextLabel"); empty.Size=UDim2.new(1,0,0,24)
+        empty.BackgroundTransparency=1; empty.Font=Enum.Font.Gotham; empty.TextSize=11
+        empty.TextColor3=CONFIG.DimColor; empty.TextXAlignment=Enum.TextXAlignment.Center
+        empty.Text="Aucune config sauvegardée"; empty.LayoutOrder=1; empty.Parent=profileListFrame
+        table.insert(profileRows,{frame=empty}); return
+    end
+    for idx,name in ipairs(names) do
+        local n=name
+        local row=Instance.new("Frame"); row.Size=UDim2.new(1,0,0,36)
+        row.BackgroundColor3=CONFIG.PanelColor; row.BorderSizePixel=0; row.LayoutOrder=idx; row.Parent=profileListFrame
+        Instance.new("UICorner",row).CornerRadius=UDim.new(0,6)
+        if selectedProfile==name then
+            local hl=Instance.new("UIStroke"); hl.Color=Color3.fromRGB(180,160,255); hl.Thickness=1.5; hl.Parent=row
+        end
+        local nameLabel=Instance.new("TextLabel"); nameLabel.Size=UDim2.new(1,-170,1,0); nameLabel.Position=UDim2.new(0,12,0,0)
+        nameLabel.BackgroundTransparency=1; nameLabel.Font=Enum.Font.GothamBold; nameLabel.TextSize=12
+        nameLabel.TextColor3=Color3.fromRGB(220,220,255); nameLabel.TextXAlignment=Enum.TextXAlignment.Left
+        nameLabel.Text=n; nameLabel.Parent=row
+        local loadBtn=Instance.new("TextButton"); loadBtn.Size=UDim2.new(0,70,0,24); loadBtn.Position=UDim2.new(1,-160,0.5,-12)
+        loadBtn.BackgroundColor3=Color3.fromRGB(30,60,90); loadBtn.BorderSizePixel=0
+        loadBtn.Font=Enum.Font.GothamBold; loadBtn.TextSize=11; loadBtn.TextColor3=Color3.fromRGB(120,200,255)
+        loadBtn.Text="📂 Load"; loadBtn.AutoButtonColor=false; loadBtn.Parent=row
+        Instance.new("UICorner",loadBtn).CornerRadius=UDim.new(0,4)
+        loadBtn.MouseButton1Click:Connect(function()
+            selectedProfile=n; local ok,msg=loadProfile(n)
+            cfgStatus((ok and "✓ " or "✗ ")..'"'..n..'" '..msg,ok); rebuildProfileList()
+        end)
+        local owBtn=Instance.new("TextButton"); owBtn.Size=UDim2.new(0,70,0,24); owBtn.Position=UDim2.new(1,-86,0.5,-12)
+        owBtn.BackgroundColor3=Color3.fromRGB(60,50,30); owBtn.BorderSizePixel=0
+        owBtn.Font=Enum.Font.GothamBold; owBtn.TextSize=11; owBtn.TextColor3=Color3.fromRGB(255,210,80)
+        owBtn.Text="✏️ Écraser"; owBtn.AutoButtonColor=false; owBtn.Parent=row
+        Instance.new("UICorner",owBtn).CornerRadius=UDim.new(0,4)
+        owBtn.MouseButton1Click:Connect(function()
+            local ok,msg=saveProfile(n); cfgStatus((ok and "✓ " or "✗ ")..'"'..n..'" '..msg,ok)
+        end)
+        local delBtn=Instance.new("TextButton"); delBtn.Size=UDim2.new(0,24,0,24); delBtn.Position=UDim2.new(1,-34,0.5,-12)
+        delBtn.BackgroundColor3=Color3.fromRGB(80,30,30); delBtn.BorderSizePixel=0
+        delBtn.Font=Enum.Font.GothamBold; delBtn.TextSize=13; delBtn.TextColor3=Color3.fromRGB(255,100,100)
+        delBtn.Text="✕"; delBtn.AutoButtonColor=false; delBtn.Parent=row
+        Instance.new("UICorner",delBtn).CornerRadius=UDim.new(0,4)
+        delBtn.MouseButton1Click:Connect(function()
+            local ok,msg=deleteProfile(n); if selectedProfile==n then selectedProfile=nil end
+            cfgStatus((ok and "✓ " or "✗ ")..'"'..n..'" '..msg,ok); rebuildProfileList()
+        end)
+        table.insert(profileRows,{name=n,frame=row})
+    end
+end
+saveBtn.MouseButton1Click:Connect(function()
+    local name=newCfgBox.Text:match("^%s*(.-)%s*$"); if name=="" then cfgStatus("✗ Entre un nom",false); return end
+    name=name:gsub('[\\/:*?"<>|]','_'); local ok,msg=saveProfile(name)
+    cfgStatus((ok and "✓ " or "✗ ")..'"'..name..'" '..msg,ok); if ok then newCfgBox.Text="" end; rebuildProfileList()
+end)
+TabBtns["Config"].MouseButton1Click:Connect(rebuildProfileList); rebuildProfileList()
+
+-- ============================================================
+-- GUI ROOTS REGISTRY (pour stream proof)
+-- ============================================================
+allGuiRoots = {overlayGui, specGui, MenuGui}
+
+-- ============================================================
+-- INPUT
+-- ============================================================
+UserInputService.InputBegan:Connect(function(inp,gpe)
+    if gpe then return end
+
+    -- rebind stream key
+    if streamKeyListening and inp.UserInputType==Enum.UserInputType.Keyboard then
+        CONFIG.StreamKey=inp.KeyCode
+        streamKeyBtn.Text=tostring(inp.KeyCode):gsub("Enum.KeyCode.","")
+        streamKeyBtn.TextColor3=Color3.fromRGB(255,255,255); streamKeyListening=false; return
+    end
+    if panicKeyListening and inp.UserInputType==Enum.UserInputType.Keyboard then
+        CONFIG.PanicKey=inp.KeyCode
+        panicKeyBtn.Text=tostring(inp.KeyCode):gsub("Enum.KeyCode.","")
+        panicKeyBtn.TextColor3=Color3.fromRGB(255,100,100); panicKeyListening=false; return
+    end
+
+    -- stream key toggle
+    if inp.KeyCode==CONFIG.StreamKey then
+        if streamActive then
+            exitStreamMode()
+            CONFIG.MenuOpen=true; MenuGui.Enabled=true
+        else
+            enterStreamMode()
+            CONFIG.MenuOpen=false
+        end
+        refreshStreamBanner(); return
+    end
+
+    -- panic key hold
+    if inp.KeyCode==CONFIG.PanicKey then
+        panicHide(); CONFIG.MenuOpen=false; MenuGui.Enabled=false; return
+    end
+
+    -- menu toggle (bloqué en stream/panic)
+    if inp.KeyCode==CONFIG.MenuKey then
+        if streamActive or panicActive then return end
+        CONFIG.MenuOpen=not CONFIG.MenuOpen; MenuGui.Enabled=CONFIG.MenuOpen
+    end
+
+    if inp.KeyCode==CONFIG.AimKey then
+        if CONFIG.AimHoldMode then aimActive=true else aimActive=not aimActive end
+    end
+    if inp.UserInputType==Enum.UserInputType.MouseButton1 then mouseDown=true end
+end)
+
+UserInputService.InputEnded:Connect(function(inp)
+    if inp.KeyCode==CONFIG.AimKey and CONFIG.AimHoldMode then aimActive=false end
+    if inp.UserInputType==Enum.UserInputType.MouseButton1 then mouseDown=false end
+    -- panic key relâché = restore
+    if inp.KeyCode==CONFIG.PanicKey then panicRestore() end
+end)
+
+-- auto-hide sur perte de focus (Alt+Tab)
+game:GetService("GuiService"):GetPropertyChangedSignal("MenuIsOpen"):Connect(function()
+    if CONFIG.AutoHideOnAlt and game:GetService("GuiService").MenuIsOpen then
+        if not streamActive then enterStreamMode(); refreshStreamBanner() end
+    end
+end)
+
+-- ============================================================
+-- ESP
+-- ============================================================
+local espData={}
+local function removeESP(player)
+    if not espData[player] then return end
+    for _,obj in ipairs(espData[player].lines or {}) do pcall(function() obj:Remove() end) end
+    for _,obj in ipairs(espData[player].box   or {}) do pcall(function() obj:Remove() end) end
+    for _,obj in ipairs(espData[player].hpBars or {}) do pcall(function() obj:Remove() end) end
+    if espData[player].nametag then pcall(function() espData[player].nametag:Remove() end) end
+    if espData[player].distLbl then pcall(function() espData[player].distLbl:Remove() end) end
+    espData[player]=nil
+end
+local function initESP(player)
+    if espData[player] then return end
+    local lines={}
+    for _=1,#SKELETON_CONNECTIONS do
+        local l=Drawing.new("Line"); l.Visible=false; l.Color=CONFIG.SkeletonColor; l.Thickness=CONFIG.ESPThickness
+        table.insert(lines,l)
+    end
+    local box={}
+    for _=1,4 do local l=Drawing.new("Line"); l.Visible=false; l.Color=CONFIG.BoxColor; l.Thickness=1.2; table.insert(box,l) end
+    local hpBack=Drawing.new("Line"); hpBack.Visible=false; hpBack.Color=Color3.fromRGB(30,30,30); hpBack.Thickness=4
+    local hpFill=Drawing.new("Line"); hpFill.Visible=false; hpFill.Color=Color3.fromRGB(80,255,120); hpFill.Thickness=3
+    local nametag=Drawing.new("Text"); nametag.Visible=false; nametag.Color=CONFIG.NametagColor
+    nametag.Size=13; nametag.Outline=true; nametag.Center=true; nametag.Font=Drawing.Fonts.UI
+    local distLbl=Drawing.new("Text"); distLbl.Visible=false; distLbl.Color=Color3.fromRGB(200,200,200)
+    distLbl.Size=12; distLbl.Outline=true; distLbl.Center=true; distLbl.Font=Drawing.Fonts.UI
+    espData[player]={lines=lines,box=box,hpBars={hpBack,hpFill},nametag=nametag,distLbl=distLbl}
+end
+local function updateESP(player)
+    local char=player.Character; local hum=getHumanoid(char); local d=espData[player]
+    if not char or not hum or not d then return end
+    local alive=hum.Health>0
+    -- ESP Drawing visible même en stream mode (Drawing API = pas capturé par OBS sur Roblox)
+    local on=CONFIG.ESPEnabled and alive
+    for i,conn in ipairs(SKELETON_CONNECTIONS) do
+        local pA=getPart(char,conn[1]); local pB=getPart(char,conn[2]); local line=d.lines[i]
+        if CONFIG.SkeletonEnabled and on and pA and pB then
+            local sA,okA=worldToViewport(pA.Position); local sB,okB=worldToViewport(pB.Position)
+            if okA and okB then line.From=sA; line.To=sB; line.Visible=true else line.Visible=false end
+        else line.Visible=false end
+    end
+    local headPart=getPart(char,"Head"); local footPart=getPart(char,"LeftFoot") or getPart(char,"RightFoot")
+    local hrp=getPart(char,"HumanoidRootPart"); local topSP,onTop,botSP,onBot
+    if headPart and footPart then
+        topSP,onTop=worldToViewport(headPart.Position+Vector3.new(0,0.6,0))
+        botSP,onBot=worldToViewport(footPart.Position-Vector3.new(0,0.2,0))
+    end
+    if CONFIG.BoxEnabled and on and onTop and onBot then
+        local h=math.abs(topSP.Y-botSP.Y); local w=h*0.55; local cx=topSP.X
+        local tl=Vector2.new(cx-w/2,topSP.Y); local tr=Vector2.new(cx+w/2,topSP.Y)
+        local bl=Vector2.new(cx-w/2,botSP.Y); local br=Vector2.new(cx+w/2,botSP.Y)
+        local pts={tl,tr,tr,br,br,bl,bl,tl}
+        for i2=1,4 do d.box[i2].From=pts[i2*2-1]; d.box[i2].To=pts[i2*2]; d.box[i2].Visible=true end
+    else for _,l in ipairs(d.box) do l.Visible=false end end
+    local hpBack=d.hpBars[1]; local hpFill=d.hpBars[2]
+    if CONFIG.HealthBarEnabled and on and onTop and onBot then
+        local h=math.abs(botSP.Y-topSP.Y); local cx=topSP.X; local xLeft=cx-h*0.55/2-6
+        local pct=getHealthPercent(player); local barH=h*pct
+        hpBack.From=Vector2.new(xLeft,topSP.Y); hpBack.To=Vector2.new(xLeft,botSP.Y); hpBack.Visible=true
+        hpFill.From=Vector2.new(xLeft,botSP.Y); hpFill.To=Vector2.new(xLeft,botSP.Y-barH)
+        hpFill.Color=lerpColor(CONFIG.HealthColorLow,CONFIG.HealthColorHigh,pct); hpFill.Visible=true
+    else hpBack.Visible=false; hpFill.Visible=false end
+    if CONFIG.NametagEnabled and on and headPart then
+        local sp,okS=worldToViewport(headPart.Position+Vector3.new(0,2.4,0))
+        if okS then d.nametag.Position=sp; d.nametag.Text=string.format("%s  [%d HP]",player.DisplayName,math.floor(hum.Health)); d.nametag.Visible=true
+        else d.nametag.Visible=false end
+    else d.nametag.Visible=false end
+    if CONFIG.DistanceEnabled and on and hrp then
+        local dist=getDistance(player); local sp,ok=worldToViewport(hrp.Position+Vector3.new(0,-2.0,0))
+        if ok then d.distLbl.Position=sp; d.distLbl.Text=dist.." m"; d.distLbl.Visible=true
+        else d.distLbl.Visible=false end
+    else d.distLbl.Visible=false end
+end
+local fovCircle=Drawing.new("Circle"); fovCircle.Visible=false; fovCircle.Radius=150
+fovCircle.Color=Color3.fromRGB(255,255,255); fovCircle.Thickness=1; fovCircle.Filled=false
+
+-- ============================================================
+-- MAIN LOOP
+-- ============================================================
+RunService.RenderStepped:Connect(function(dt)
+    local center=Vector2.new(Camera.ViewportSize.X/2,Camera.ViewportSize.Y/2)
+    fovCircle.Visible=CONFIG.AimbotEnabled and aimActive and not streamActive and not panicActive
+    fovCircle.Radius=CONFIG.AimFOV; fovCircle.Position=center
+    for _,p in ipairs(Players:GetPlayers()) do if p~=LocalPlayer then initESP(p); updateESP(p) end end
+    if not CONFIG.AimbotEnabled or not aimActive then return end
+    local target=getBestTarget(); if not target then return end
+    local smooth=math.clamp(1-CONFIG.AimSmoothing,0.01,1.0)
+    local factor=math.clamp(smooth*(dt*60),0.01,1.0)
+    Camera.CFrame=Camera.CFrame:Lerp(CFrame.lookAt(Camera.CFrame.Position,target.Position),factor)
+    if CONFIG.MagicBullet and mouseDown then
+        local now=tick()
+        if (now-lastShot)>=CONFIG.CeilingTime then
+            lastShot=now; Camera.CFrame=CFrame.lookAt(Camera.CFrame.Position,target.Position)
+        end
+    end
+end)
+Players.PlayerRemoving:Connect(removeESP)
+
+print(string.format("[RSK v2.5] Urban Reload — INSERT=menu | StreamKey=%s | PanicKey=%s | hookmetamethod=%s",
+    tostring(CONFIG.StreamKey):gsub("Enum.KeyCode.",""),
+    tostring(CONFIG.PanicKey):gsub("Enum.KeyCode.",""),
+    tostring(hookmetamethod~=nil)))
